@@ -2,15 +2,26 @@ package thinkinjava.hyh;
 
 import java.io.*;
 import java.lang.reflect.*;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.*;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
+
+import static java.lang.Thread.*;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class ThinkInJavaTest {
     public static void main() {
@@ -105,8 +116,44 @@ public class ThinkInJavaTest {
         EnumClass.chapter19_1();
         Reflection.chapter19_4();
         ConstantSpecificMethod.chapter19_10();
-        //todo
+
         MainThread.chapter21_2();
+        BasicThreads.chapter21_2();
+        CachedThreadPool.chapter21_2();
+        CallableDemo.chapter21_2();
+        SimpleThread.chapter21_2();
+        //Joining.chapter21_2();
+        //NativeExceptionHandling.chapter21_2();
+        //CaptureUncaughtException.chapter21_2();
+        //SettingDefaultHandler.chapter21_2();
+        //AtomicityTest.chapter21_3();
+        //SynchObject.chapter21_3();
+        //OrnamentalGarden.chapter21_4();
+        //Interrupting.chapter21_4();
+        //NIOInterruption.chapter21_4();
+        //Interrupting2.chapter21_4();
+        //WaxOMatic.chapter21_5();
+        //Restaurant.chapter21_5();
+        //WaxOMatic2.chapter21_5();
+        //TestBlockingQueues.chapter21_5();
+        //PipedIO.chapter21_5();
+        /*
+        try {
+            DeadlockingDiningPhilosophers.chapter21_6();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        */
+        /*
+        try {
+            FixedDiningPhilosophers.chapter21_6();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        */
+        //CountDownLatchDemo.chapter21_7();
+        //DelayQueueDemo.chapter21_7();
+        ActiveObjectDemo.chapter21_10();
     }
 }
 
@@ -1555,6 +1602,7 @@ class LiftOff implements Runnable {
 
     @Override
     public void run() {
+        System.out.println("Thread:" + Thread.currentThread());
         while (countDown-- > 0) {
             System.out.println(status());
         }
@@ -1562,10 +1610,1157 @@ class LiftOff implements Runnable {
 }
 class MainThread {
     public static void chapter21_2() {
+        System.out.println("MainThread:" + Thread.currentThread());
         LiftOff lauch = new LiftOff();
         lauch.run();
     }
 }
 
+class BasicThreads {
+    public static void chapter21_2() {
+        System.out.println("BasicThreads:" + Thread.currentThread());
+        Thread t = new Thread(new LiftOff());
+        t.start();
 
+    }
+}
 
+class CachedThreadPool {
+    public static void chapter21_2() {
+        System.out.println("CachedThreadPool:" + Thread.currentThread());
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        for(int i=0;i<3;i++) {
+            executorService.execute(new LiftOff());
+        }
+        executorService.shutdown();
+    }
+}
+
+class TaskWithResult implements Callable<String> {
+    private int id;
+    public TaskWithResult(int id) {
+        this.id = id;
+    }
+
+    @Override
+    public String call() throws Exception {
+        System.out.println("TaskWithResult:" + Thread.currentThread());
+        return "result id: " + id;
+    }
+}
+class CallableDemo {
+    public static void chapter21_2() {
+        System.out.println("CallableDemo:" + Thread.currentThread());
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        ArrayList<Future<String>> results = new ArrayList<>();
+        for(int i = 0; i < 3; i++) {
+            results.add(executorService.submit(new TaskWithResult(i)));
+        }
+        for(Future<String> fs:results) {
+            try {
+                System.out.println(fs.get());
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            } catch (ExecutionException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+class SimpleThread extends Thread {
+    private int countDown = 5;
+    private static int threadCount = 0;
+    public SimpleThread() {
+        super(Integer.toString(++threadCount));     //store the thread name
+        start();
+    }
+    public String toString() {
+        return "#" + getName() + "(" + countDown + ")";
+    }
+    public void run() {
+        System.out.println("SimpleThread:" + Thread.currentThread());
+        while(true) {
+            System.out.println(this);
+            if(--countDown==0) {
+                break;
+            }
+        }
+    }
+    public static void chapter21_2() {
+        for(int i = 0; i < 3; i++) {
+            new SimpleThread();
+        }
+    }
+}
+
+class Sleeper extends Thread {
+    private int duration;
+    public Sleeper(String name, int sleepTime) {
+        super(name);
+        duration = sleepTime;
+        start();
+    }
+   public void run() {
+       try {
+           sleep(duration);
+       } catch (InterruptedException e) {
+           e.printStackTrace();
+           System.out.println(getName() + " was interrupted.");
+           System.out.println("isInterrupted(): " + isInterrupted());
+           return;
+       }
+       System.out.println(getName() + " has awakened");
+   }
+}
+class Joiner extends Thread {
+    private Sleeper sleeper;
+    public Joiner(String name, Sleeper sleeper) {
+        super(name);
+        this.sleeper = sleeper;
+        start();
+    }
+    public void run() {
+        try {
+            sleeper.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            System.out.println("isInterrupted(): " + isInterrupted());
+        }
+        System.out.println(getName() + " join completed");
+    }
+}
+class Joining {
+    public static void chapter21_2() {
+        Sleeper sleepy = new Sleeper("Sleepy",1500);
+        Sleeper grumpy = new Sleeper("Grumpy",1500);
+        Joiner sleepy_join = new Joiner("Sleepy_join",sleepy);
+        Joiner grumpy_join = new Joiner("Grumpy_join",grumpy);
+        grumpy.interrupt();
+    }
+}
+
+class ExceptionThread implements Runnable {
+    @Override
+    public void run() {
+        throw new RuntimeException();
+    }
+}
+class NativeExceptionHandling {
+    public static void chapter21_2() {
+        try {
+            ExecutorService executorService = Executors.newCachedThreadPool();
+            executorService.execute(new ExceptionThread());
+        } catch(RuntimeException ue) {
+            System.out.println("Exception has been handled!");
+        }
+    }
+}
+
+class MyUncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
+    @Override
+    public void uncaughtException(Thread t, Throwable e) {
+        System.out.println("!!! caught " + e);
+    }
+}
+class HandlerThreadFactory implements ThreadFactory {
+    @Override
+    public Thread newThread(Runnable r) {
+        System.out.println(this + " creating new Thread");
+        Thread t = new Thread(r);
+        System.out.println("created " + t);
+        t.setUncaughtExceptionHandler(new MyUncaughtExceptionHandler());
+        System.out.println("eh = " + t.getUncaughtExceptionHandler());
+        return t;
+    }
+}
+class CaptureUncaughtException {
+    public static void chapter21_2() {
+        ExecutorService executorService = Executors.newCachedThreadPool(new HandlerThreadFactory());
+        executorService.execute(new ExceptionThread());
+    }
+}
+
+class SettingDefaultHandler {
+    public static void chapter21_2() {
+        Thread.setDefaultUncaughtExceptionHandler(new MyUncaughtExceptionHandler());
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        executorService.execute(new ExceptionThread());
+    }
+}
+
+abstract class IntGenerator {
+    public abstract int next();
+}
+class SynchronizedEvenGenerator extends IntGenerator {
+    private int currentValue = 0;
+    @Override
+    public synchronized int next() {
+        ++currentValue;
+        ++currentValue;
+        return currentValue;
+    }
+}
+
+class MutexEvenGenerator extends IntGenerator {
+    private int currentValue = 0;
+    private Lock lock;
+    @Override
+    public int next() {
+        lock.lock();
+        try {
+            ++currentValue;
+            ++currentValue;
+            return currentValue;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+class AtomicityTest implements Runnable {
+    private int i = 0;
+    public int flag = 0;
+    public int getValue() {
+    //public synchronized int getValue() {
+        return i;
+    }
+    private synchronized void evenIncrease() {
+        i++;
+        i++;
+    }
+    @Override
+    public void run() {
+        while(true) {
+            evenIncrease();
+            if (flag == 1) {
+                break;
+            }
+        }
+        System.out.println("AtomicityTest 2");
+    }
+
+    public static void chapter21_3() {
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        AtomicityTest atomicityTest = new AtomicityTest();
+        executorService.execute(atomicityTest);
+        while (true) {
+            int val = atomicityTest.getValue();
+            if (val % 2 != 0) {
+               System.out.println(val);
+               atomicityTest.flag = 1;
+               break;
+            }
+        }
+        System.out.println("AtomicityTest 1");
+    }
+}
+
+class DualSynch {
+    private Object syncObject = new Object();
+    public synchronized void f() {
+        for (int i=0;i<5;i++) {
+            System.out.println("f()");
+            try {
+                sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            Thread.yield();
+        }
+    }
+    public void g() {
+        synchronized (syncObject) {
+            for (int i=0;i<5;i++) {
+                System.out.println("g()");
+                try {
+                    sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                Thread.yield();
+            }
+        }
+    }
+}
+class SynchObject {
+    public static void chapter21_3() {
+        DualSynch dualSynch = new DualSynch();
+        new Thread() {
+            public void run() {
+                dualSynch.f();
+            }
+        }.start();
+        dualSynch.g();
+    }
+}
+
+class Entrance implements Runnable {
+    private static volatile boolean canceled = false;
+    public static void cancel() {
+        canceled = true;
+    }
+
+    @Override
+    public void run() {
+        while(!canceled) {
+            try {
+                System.out.println("Entrance " + this + "do something!");
+                TimeUnit.MILLISECONDS.sleep(500);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+class OrnamentalGarden {
+    public static void chapter21_4() {
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        for(int i=0;i<2;i++) {
+            executorService.execute(new Entrance());
+        }
+        try {
+            TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Entrance.cancel();
+        executorService.shutdown();
+        try {
+            if(!executorService.awaitTermination(50,TimeUnit.MILLISECONDS)) {
+                System.out.println("Some tasks were not terminated!");
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class SleepBlocked implements Runnable {
+    @Override
+    public void run() {
+        try {
+            TimeUnit.SECONDS.sleep(100);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+class IOBlocked implements Runnable {
+    private InputStream in;
+    public IOBlocked(InputStream is) {
+        in = is;
+    }
+    @Override
+    public void run() {
+        try {
+            System.out.println("in.read() >>> ");
+            in.read();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+class SynchronizedBlocked implements Runnable {
+    public SynchronizedBlocked() {
+        new Thread(){
+            public void run() {
+                f();
+            }
+        }.start();
+    }
+    public synchronized void f() {
+        while(true) {
+            Thread.yield();
+        }
+    }
+    @Override
+    public void run() {
+        System.out.println("try to call f() >>>");
+        f();
+        System.out.println("called f()");
+    }
+}
+class Interrupting {
+    private static ExecutorService executorService = Executors.newCachedThreadPool();
+    static void test(Runnable r) throws InterruptedException {
+        Future<?> f = executorService.submit(r);
+        TimeUnit.SECONDS.sleep(1);
+        System.out.println("Interrupting " + r.getClass().getName());
+        f.cancel(true);
+        System.out.println("Interrupt sent to " + r.getClass().getName());
+    }
+    public static void chapter21_4() {
+        try {
+            test(new SleepBlocked());
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        try {
+            test(new IOBlocked(System.in));
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        try {
+            test(new SynchronizedBlocked());
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class NIOBlocked implements Runnable {
+    private final SocketChannel sc;
+
+    NIOBlocked(SocketChannel sc) {
+        this.sc = sc;
+    }
+
+    @Override
+    public void run() {
+        System.out.println(" read in >>> " + this);
+        try {
+            sc.read(ByteBuffer.allocate(1));
+        } catch (ClosedByInterruptException e) {
+            System.out.println("catch e:" + e);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        System.out.println(" read out >>> " + this);
+    }
+}
+class NIOInterruption {
+    public static void chapter21_4() {
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        try {
+            ServerSocket serverSocket = new ServerSocket(8080);
+            InetSocketAddress isa = new InetSocketAddress("localhost", 8080);
+            SocketChannel sc = SocketChannel.open(isa);
+            Future<?> f = executorService.submit(new NIOBlocked(sc));
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println("Interrupting ");
+            f.cancel(true);
+            System.out.println("Interrupt sented ");
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            sc.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class BlockedMutex {
+    private Lock lock = new ReentrantLock();
+    public BlockedMutex() {
+        System.out.println("BlockedMutex() " + currentThread());
+        lock.lock();
+    }
+    public void f() {
+        System.out.println("f() " + currentThread());
+        try {
+            lock.lockInterruptibly();
+            System.out.println("f() acquired lock!");
+        } catch (InterruptedException e) {
+            System.out.println("f() InterruptedException!");
+        }
+    }
+}
+class Blocked2 implements Runnable {
+    BlockedMutex blockedMutex = new BlockedMutex();
+    @Override
+    public void run() {
+        System.out.println("Blocked2() in >>>");
+        blockedMutex.f();
+        System.out.println("Blocked2() out >>>");
+    }
+}
+class Interrupting2 {
+    public static void chapter21_4() {
+        Thread thread = new Thread(new Blocked2());
+        thread.start();
+        try {
+            TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("Interrupting ");
+        thread.interrupt();
+        System.out.println("Interrupted ");
+    }
+}
+
+class Car {
+    private boolean waxOn = false;
+    //打蜡
+    public synchronized void waxed() {
+        waxOn = true;
+        notifyAll();
+    }
+    //抛光
+    public synchronized void buffed() {
+        waxOn = false;
+        notifyAll();
+    }
+    //等待打蜡
+    public synchronized void waitForWax() throws InterruptedException {
+        while(waxOn == false) {
+            wait();
+        }
+    }
+    //等待抛光
+    public synchronized void waitForBuff() throws InterruptedException {
+        while(waxOn == true) {
+            wait();
+        }
+    }
+}
+//打蜡，等待抛光
+class WaxOn implements Runnable {
+    private Car car;
+    public WaxOn(Car c) {
+        car = c;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                TimeUnit.MILLISECONDS.sleep(200);
+                System.out.println("Wax On! 打蜡!");
+                car.waxed();
+                System.out.println("Wax On! 等待抛光!");
+                car.waitForBuff();
+            }
+        } catch (InterruptedException e) {
+            System.out.println("WaxOn InterruptedException!");
+        }
+        System.out.println("WaxOn done!");
+    }
+}
+//等待打蜡，抛光
+class WaxOff implements Runnable {
+    private Car car;
+    public WaxOff(Car c) {
+        car = c;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                System.out.println("Wax Off! 等待打蜡!");
+                car.waitForWax();
+                TimeUnit.MILLISECONDS.sleep(200);
+                System.out.println("Wax Off! 抛光!");
+                car.buffed();
+            }
+        } catch (InterruptedException e) {
+            System.out.println("WasOff InterruptedException!");
+        }
+        System.out.println("WaxOff done!");
+    }
+}
+class WaxOMatic {
+    public static void chapter21_5() {
+        Car car = new Car();
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        executorService.execute(new WaxOff(car));
+        executorService.execute(new WaxOn(car));
+        try {
+            TimeUnit.MILLISECONDS.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        executorService.shutdownNow();
+    }
+}
+
+class Meal {
+    private final int orderNum;
+    Meal(int orderNum) {
+        this.orderNum = orderNum;
+    }
+    public String toString() {
+        return "Meal:" + orderNum;
+    }
+}
+class WaitPerson implements Runnable {
+    private Restaurant restaurant;
+    public WaitPerson(Restaurant r) {
+        restaurant = r;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                synchronized (this) {
+                    while (restaurant.meal == null) {
+                        wait();     //wait for chef to produce a meal
+                    }
+                }
+                System.out.println("WaitPerson got " + restaurant.meal);
+                synchronized (restaurant.chef) {
+                    restaurant.meal = null;
+                    restaurant.chef.notifyAll();        //notify chef to produce another meal
+                }
+            }
+        } catch (InterruptedException e) {
+            System.out.println("WaitPerson InterruptedException");
+        }
+        System.out.println("WaitPerson out <<<");
+    }
+}
+class Chef implements Runnable {
+    private Restaurant restaurant;
+    private int count = 0;
+    public Chef(Restaurant r) {
+        restaurant = r;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                synchronized (this) {
+                    while (restaurant.meal != null) {
+                        wait();
+                    }
+                }
+                if (++count == 5) {
+                    System.out.println("Out of food! Closing!");
+                    restaurant.executorService.shutdownNow();
+                }
+                System.out.println("Chef produce meal: " + count);
+                synchronized (restaurant.waitPerson) {
+                    restaurant.meal = new Meal(count);
+                    restaurant.waitPerson.notifyAll();
+                }
+                //注意加sleep,否则while循环退出，不产生中断
+                TimeUnit.MILLISECONDS.sleep(500);
+            }
+        } catch (InterruptedException e) {
+            System.out.println("Chef InterruptedException");
+        }
+        System.out.println("Chef out <<<");
+    }
+}
+class Restaurant {
+    Meal meal;
+    ExecutorService executorService = Executors.newCachedThreadPool();
+    WaitPerson waitPerson = new WaitPerson(this);
+    Chef chef = new Chef(this);
+    Restaurant() {
+        executorService.execute(chef);
+        executorService.execute(waitPerson);
+    }
+
+    public static void chapter21_5() {
+        new Restaurant();
+    }
+}
+
+class Car2 {
+    private Lock lock = new ReentrantLock();
+    private Condition condition = lock.newCondition();
+    private boolean waxOn = false;
+    //打蜡
+    public void waxed() {
+        lock.lock();
+        try {
+            waxOn = true;
+            condition.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+    //抛光
+    public void buffed() {
+        lock.lock();
+        try {
+            waxOn = false;
+            condition.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+    //等待打蜡
+    public void waitForWax() throws InterruptedException {
+        lock.lock();
+        try {
+            while (waxOn == false) {
+                condition.await();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+    //等待抛光
+    public void waitForBuff() throws InterruptedException {
+        lock.lock();
+        try {
+            while(waxOn == true) {
+                condition.await();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+//打蜡，等待抛光
+class WaxOn2 implements Runnable {
+    private Car2 car;
+    public WaxOn2(Car2 c) {
+        car = c;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                TimeUnit.MILLISECONDS.sleep(200);
+                System.out.println("Wax On! 打蜡!");
+                car.waxed();
+                System.out.println("Wax On! 等待抛光!");
+                car.waitForBuff();
+            }
+        } catch (InterruptedException e) {
+            System.out.println("WaxOn InterruptedException!");
+        }
+        System.out.println("WaxOn done!");
+    }
+}
+//抛光，等待打蜡
+class WaxOff2 implements Runnable {
+    private Car2 car;
+    public WaxOff2(Car2 c) {
+        car = c;
+    }
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                System.out.println("Wax Off! 等待打蜡!");
+                car.waitForWax();
+                TimeUnit.MILLISECONDS.sleep(200);
+                System.out.println("Wax Off! 抛光!");
+                car.buffed();
+            }
+        } catch (InterruptedException e) {
+            System.out.println("WasOff InterruptedException!");
+        }
+        System.out.println("WaxOff done!");
+    }
+}
+class WaxOMatic2 {
+    public static void chapter21_5() {
+        Car2 car = new Car2();
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        executorService.execute(new WaxOff2(car));
+        executorService.execute(new WaxOn2(car));
+        try {
+            TimeUnit.MILLISECONDS.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        executorService.shutdownNow();
+    }
+}
+
+class LiftOffRunner implements Runnable {
+    private BlockingQueue<LiftOff> rockets;
+    public LiftOffRunner(BlockingQueue<LiftOff> queue) {
+        rockets = queue;
+    }
+    public void add(LiftOff liftOff) {
+        try {
+            rockets.put(liftOff);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+    @Override
+    public void run() {
+        try {
+            while(!Thread.interrupted()) {
+                LiftOff rocket = rockets.take();
+                rocket.run();
+            }
+        } catch (InterruptedException e) {
+            System.out.println("LiftOffRunner InterruptedException");
+        }
+        System.out.println("Exit LiftOffRunner");
+    }
+}
+class TestBlockingQueues {
+    static void test(String msg, BlockingQueue<LiftOff> queue) {
+        LiftOffRunner liftOffRunner = new LiftOffRunner(queue);
+        Thread thread = new Thread(liftOffRunner);
+        thread.start();
+        //3个LiftOff,countDown 5
+        for(int i=0;i<3;i++) {
+            liftOffRunner.add(new LiftOff(5));
+        }
+        try {
+            TimeUnit.MILLISECONDS.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        thread.interrupt();
+    }
+    public static void chapter21_5() {
+        System.out.println("test LinkedBlockingDeque =====================");
+        test("LinkedBlockingDeque", new LinkedBlockingDeque<>());       //Unlimited size
+        System.out.println("test ArrayBlockingQueue =====================");
+        test("ArrayBlockingQueue", new ArrayBlockingQueue<>(2));       //Fixed size
+        System.out.println("test SynchronousQueue =====================");
+        test("SynchronousQueue", new SynchronousQueue<>());       //1 size
+    }
+}
+
+class Sender implements Runnable {
+    private PipedWriter out = new PipedWriter();
+    public PipedWriter getPipedWriter() {
+        return out;
+    }
+    @Override
+    public void run() {
+        try {
+            while(true) {
+                for (char c= 'A'; c <= 'z';c++) {
+                    out.write(c);
+                    TimeUnit.MILLISECONDS.sleep(500);
+                }
+            }
+        } catch (IOException e) {
+            System.out.println(e + " Sender write exception");
+        } catch (InterruptedException e) {
+            System.out.println(e + " === Sender sleep interrupted");
+        }
+    }
+}
+class Receiver implements Runnable {
+    private PipedReader in;
+    public Receiver(Sender sender) throws IOException {
+        in = new PipedReader(sender.getPipedWriter());
+    }
+    @Override
+    public void run() {
+        try {
+            while(true) {
+                System.out.println("Read: " + (char)in.read() + " ");
+            }
+        } catch (IOException e) {
+            System.out.println(e + " Receiver read exception");
+        }
+    }
+}
+class PipedIO {
+    public static void chapter21_5() {
+        Sender sender = new Sender();
+        try {
+            Receiver receiver = new Receiver(sender);
+            ExecutorService executorService = Executors.newCachedThreadPool();
+            executorService.execute(sender);
+            executorService.execute(receiver);
+            try {
+                TimeUnit.SECONDS.sleep(5);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            executorService.shutdownNow();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class Chopstick {
+    private boolean taken = false;
+    public synchronized void take() throws InterruptedException {
+        while(taken) {
+            wait();
+        }
+        taken = true;
+    }
+    public synchronized void drop() {
+        taken = false;
+        notifyAll();
+    }
+}
+class Philosopher implements Runnable {
+    private Chopstick left;
+    private Chopstick right;
+    private int id = 0;
+    private int ponderFactor = 0;         //ponder沉思
+
+    public Philosopher(Chopstick left, Chopstick right, int ident, int ponder) {
+        this.left = left;
+        this.right = right;
+        id = ident;
+        ponderFactor = ponder;
+    }
+
+    private void pause() throws InterruptedException {
+        if(ponderFactor == 0)
+            return;
+        TimeUnit.MILLISECONDS.sleep(ponderFactor*100);
+    }
+
+    @Override
+    public void run() {
+        try {
+            while(!Thread.interrupted()){
+                System.out.println(this + " " + "thinking!");
+                //pause();
+                System.out.println(this + " " + "grabbing right!");
+                right.take();
+                System.out.println(this + " " + "grabbing left!");
+                left.take();
+                System.out.println(this + " " + "eating!");
+                pause();
+                right.drop();
+                left.drop();
+            }
+        } catch (InterruptedException e) {
+            System.out.println(this + " " + "exiting via interrupt!");
+        }
+    }
+
+    public String toString() {
+        return "Philosopher " + id;
+    }
+}
+class DeadlockingDiningPhilosophers {
+    public static void chapter21_6() throws InterruptedException {
+        int ponder = 3;
+        int size = 2;
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        Chopstick[] chopsticks = new Chopstick[size];
+        for (int i=0; i<size; i++) {
+            chopsticks[i] = new Chopstick();
+        }
+        for (int i=0; i<size; i++) {
+            executorService.execute(new Philosopher(chopsticks[i], chopsticks[(i+1)%size], i ,ponder));
+        }
+        TimeUnit.SECONDS.sleep(5);
+        executorService.shutdownNow();
+    }
+}
+
+class FixedDiningPhilosophers {
+    public static void chapter21_6() throws InterruptedException {
+        int ponder = 3;
+        int size = 2;
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        Chopstick[] chopsticks = new Chopstick[size];
+        for (int i=0; i<size; i++) {
+            chopsticks[i] = new Chopstick();
+        }
+        for (int i=0; i<size; i++) {
+            if (i < size-1) {
+                executorService.execute(new Philosopher(chopsticks[i], chopsticks[i + 1], i, ponder));
+            } else {
+                executorService.execute(new Philosopher(chopsticks[0], chopsticks[i], i, ponder));
+            }
+        }
+        TimeUnit.SECONDS.sleep(5);
+        executorService.shutdownNow();
+    }
+}
+
+// Performs some portion of a task
+class TaskPortion implements Runnable {
+    private static int counter = 0;
+    private final int id = counter++;
+    private CountDownLatch latch = null;
+    TaskPortion(CountDownLatch latch) {
+        this.latch = latch;
+    }
+
+    @Override
+    public void run() {
+        try {
+            doWork();
+            latch.countDown();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void doWork() throws InterruptedException {
+        TimeUnit.MILLISECONDS.sleep(500);
+        System.out.println(this + " completed");
+    }
+
+    public String toString() {
+        return "" + id;
+    }
+}
+// Waits on the CountDownLatch
+class WaitingTask implements Runnable {
+    private static int counter = 0;
+    private final int id = counter++;
+    private CountDownLatch latch = null;
+    WaitingTask(CountDownLatch latch) {
+        this.latch = latch;
+    }
+
+    @Override
+    public void run() {
+        try {
+            latch.await();
+            System.out.println("Latch barrier passed for " + this);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String toString() {
+        return "WaitingTask " + id;
+    }
+}
+class CountDownLatchDemo {
+    static final int SIZE = 10;
+    public static void chapter21_7() {
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        CountDownLatch latch = new CountDownLatch(SIZE);
+        for (int i=0;i<10;i++) {
+            executorService.execute(new WaitingTask(latch));
+        }
+        for (int i=0;i<SIZE;i++) {
+            executorService.execute(new TaskPortion(latch));
+        }
+        System.out.println("Launched all tasks");
+        executorService.shutdown();
+        System.out.println("exit!!!");
+    }
+}
+
+class DelayedTask implements Runnable, Delayed {
+    private static int counter = 0;
+    private final int id = counter++;
+    private int delta = 0;        //ms
+    private long trigger = 0;     //ns
+    protected static List<DelayedTask> sequence = new ArrayList<>();
+    public DelayedTask(int milliseconds) {
+        delta = milliseconds;
+        trigger = System.nanoTime() + NANOSECONDS.convert(delta, MILLISECONDS);
+        sequence.add(this);
+    }
+
+    @Override
+    public long getDelay(TimeUnit unit) {
+        return unit.convert(trigger - System.nanoTime(), NANOSECONDS);
+    }
+
+    @Override
+    public int compareTo(Delayed o) {
+        DelayedTask that = (DelayedTask)o;
+        if(trigger < that.trigger) return -1;
+        if(trigger > that.trigger) return 1;
+        return 0;
+    }
+
+    @Override
+    public void run() {
+        System.out.println(this + " ");
+    }
+
+    public String toString() {
+        return delta + " Task " + id;
+    }
+}
+class EndSentinel extends DelayedTask {     //哨兵
+    private ExecutorService exec;
+    public EndSentinel(int delay, ExecutorService e) {
+        super(delay);
+        exec = e;
+    }
+
+    public void run() {
+        System.out.println(this + " Calling shutdownNow");
+        exec.shutdownNow();
+    }
+}
+class DelayedTaskConsumer implements Runnable {
+    private DelayQueue<DelayedTask> q;
+    public DelayedTaskConsumer(DelayQueue<DelayedTask> q) {
+        this.q = q;
+    }
+
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                q.take().run();
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("DelayedTaskConsumer Finished!");
+    }
+}
+class DelayQueueDemo {
+    public static void chapter21_7() {
+        Random random = new Random(47);
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        DelayQueue<DelayedTask> queue = new DelayQueue<>();
+        for (int i=0;i<10;i++) {
+            queue.put(new DelayedTask(random.nextInt(300)));
+        }
+        queue.add(new EndSentinel(500,executorService));
+        executorService.execute(new DelayedTaskConsumer(queue));
+    }
+}
+
+class ActiveObjectDemo {
+    private ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private void pause(int num) {
+        try {
+            MILLISECONDS.sleep(num);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+    public Future<Integer> calculateInt(final int x ,final int y) {
+        return executorService.submit(new Callable<Integer>() {
+            @Override
+            public Integer call() throws Exception {
+                System.out.println("starting " + x + " + " + y);
+                pause(200);
+                return x + y;
+            }
+        });
+    }
+    public void shutdown() {
+        executorService.shutdown();
+    }
+
+    public static void chapter21_10() {
+        ActiveObjectDemo activeObjectDemo = new ActiveObjectDemo();
+        List<Future<?>> results = new CopyOnWriteArrayList<>();
+        for (int i=0;i<5;i++) {
+            results.add(activeObjectDemo.calculateInt(i,i));
+        }
+        System.out.println("All asynch calls made!");
+        while(results.size() > 0) {
+            for (Future<?> f:results) {
+                if(f.isDone()) {
+                    try {
+                        System.out.println("result: " + f.get());
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    } catch (ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                    results.remove(f);
+                }
+            }
+        }
+        activeObjectDemo.shutdown();
+    }
+}
